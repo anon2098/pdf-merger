@@ -1,0 +1,22 @@
+{
+  "name": "pdf-merger-stamper",
+  "version": "1.0.0",
+  "description": "Merge PDFs chronologically and stamp with ACK numbers",
+  "type": "module",
+  "main": "merge-stamp.js",
+  "scripts": {
+    "merge": "node merge-stamp.js"
+  },
+  "keywords": [
+    "pdf",
+    "merge",
+    "stamp",
+    "acknowledgment"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1"
+  }
+}
