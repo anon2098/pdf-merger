@@ -1,9 +1,13 @@
 {
   "name": "pdf-merger-stamper",
   "version": "1.0.0",
-  "description": "Merge PDFs chronologically and stamp with ACK numbers",
+  "description": "Merge PDFs chronologically, stamp with exhibit numbers, generate index tables and ODT documents",
   "type": "module",
   "main": "merge-stamp.js",
+  "bin": {
+    "pdf-merger": "merge-stamp.js",
+    "pdf-merge-stamp": "merge-stamp.js"
+  },
   "scripts": {
     "merge": "node merge-stamp.js"
   },
@@ -11,10 +15,26 @@
     "pdf",
     "merge",
     "stamp",
-    "acknowledgment"
+    "exhibit",
+    "acknowledgment",
+    "legal",
+    "affidavit",
+    "index",
+    "odt"
   ],
-  "author": "",
-  "license": "MIT",
+  "author": "anon2098",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anon2098/pdf-merger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anon2098/pdf-merger/issues"
+  },
+  "homepage": "https://github.com/anon2098/pdf-merger#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1"
