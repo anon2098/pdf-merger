@@ -1,5 +1,5 @@
 {
-  "name": "pdf-merger-stamper",
+  "name": "@anon2098/pdf-merger-stamper",
   "version": "1.0.0",
   "description": "Merge PDFs chronologically, stamp with exhibit numbers, generate index tables and ODT documents",
   "type": "module",

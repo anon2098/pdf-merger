@@ -24,7 +24,7 @@ Merge PDFs chronologically, stamp each with exhibit numbers (ACK-001, ACK-002, e
 ### Option 1: Install globally from npm
 
 ```bash
-npm install -g pdf-merger-stamper
+npm install -g @anon2098/pdf-merger-stamper
 ```
 
 ### Option 2: Install globally from GitHub
