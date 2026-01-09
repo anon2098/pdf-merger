@@ -384,27 +384,41 @@ function extractEmailHeaderInfo(textItems) {
   // Reconstruct text by combining characters and grouping related items
   const reconstructedText = reconstructAndCleanText(textItems);
   
-  // Extract sender from "From:" field
-  const fromMatch = reconstructedText.match(/From:\s*["']([^"']*)["']/i);
-  if (fromMatch) {
-    result.sender = fromMatch[1].trim() || 'Unknown';
+  // Extract sender from "From:" field - limit length and ensure clean extraction
+  const fromMatch = reconstructedText.match(/From:\s*["']([^"']{1,100})["']/i);
+  if (fromMatch && fromMatch[1].trim()) {
+    // Clean the extracted name and limit its length
+    let sender = fromMatch[1].trim();
+    // Remove any extra content that might have been captured
+    sender = sender.split(/\s+(?:To:|Subject:|Date:)/)[0].trim();
+    result.sender = sender.substring(0, 50) || 'Unknown';
   } else {
-    // Try without quotes
-    const fromMatchNoQuotes = reconstructedText.match(/From:\s*([^<\n\r]+)/i);
-    if (fromMatchNoQuotes) {
-      result.sender = fromMatchNoQuotes[1].trim() || 'Unknown';
+    // Try without quotes, but be more careful about boundaries
+    const fromMatchNoQuotes = reconstructedText.match(/From:\s*([^<\n\r]{1,50})(?:\s*<[^>]*>)?/i);
+    if (fromMatchNoQuotes && fromMatchNoQuotes[1].trim()) {
+      let sender = fromMatchNoQuotes[1].trim();
+      // Remove any extra content that might have been captured
+      sender = sender.split(/\s+(?:To:|Subject:|Date:)/)[0].trim();
+      result.sender = sender.substring(0, 50) || 'Unknown';
     }
   }
   
-  // Extract receiver from "To:" field
-  const toMatch = reconstructedText.match(/To:\s*["']([^"']*)["']/i);
-  if (toMatch) {
-    result.receiver = toMatch[1].trim() || 'Unknown';
+  // Extract receiver from "To:" field - limit length and ensure clean extraction
+  const toMatch = reconstructedText.match(/To:\s*["']([^"']{1,100})["']/i);
+  if (toMatch && toMatch[1].trim()) {
+    // Clean the extracted name and limit its length
+    let receiver = toMatch[1].trim();
+    // Remove any extra content that might have been captured
+    receiver = receiver.split(/\s+(?:From:|Subject:|Date:)/)[0].trim();
+    result.receiver = receiver.substring(0, 50) || 'Unknown';
   } else {
-    // Try without quotes
-    const toMatchNoQuotes = reconstructedText.match(/To:\s*([^<\n\r]+)/i);
-    if (toMatchNoQuotes) {
-      result.receiver = toMatchNoQuotes[1].trim() || 'Unknown';
+    // Try without quotes, but be more careful about boundaries
+    const toMatchNoQuotes = reconstructedText.match(/To:\s*([^<\n\r]{1,50})(?:\s*<[^>]*>)?/i);
+    if (toMatchNoQuotes && toMatchNoQuotes[1].trim()) {
+      let receiver = toMatchNoQuotes[1].trim();
+      // Remove any extra content that might have been captured
+      receiver = receiver.split(/\s+(?:From:|Subject:|Date:)/)[0].trim();
+      result.receiver = receiver.substring(0, 50) || 'Unknown';
     }
   }
   
