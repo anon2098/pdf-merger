@@ -1,0 +1,10 @@
+node_modules/
+*.log
+*.tmp
+*.bak
+.DS_Store
+*.pdf
+*.odt
+test-output/
+dist/
+build/
