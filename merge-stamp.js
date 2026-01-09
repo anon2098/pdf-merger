@@ -2,8 +2,19 @@ import fs from 'fs/promises';
 import path from 'path';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { fileURLToPath } from 'url';
 
-async function mergeAndStampPDFs(inputDir, outputPath) {
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Set up worker for pdfjs
+const workerPath = path.resolve(__dirname, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
+
+async function mergeAndStampPDFs(inputDir, outputPath, options = {}) {
+  const { addPageNumbers = false, createIndex = true } = options; // Changed default to false
+  
   console.log(`Reading PDFs from: ${inputDir}`);
   
   // Get all PDF files and sort chronologically
@@ -61,51 +72,25 @@ async function mergeAndStampPDFs(inputDir, outputPath) {
     // Copy all pages
     const pages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
     
-    // Add pages and stamp first page
+    // Add pages and stamp every page
     for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
       const page = pages[pageIdx];
       mergedPdf.addPage(page);
       
-      // Only stamp the first page of each PDF
-      if (pageIdx === 0) {
-        const { width, height } = page.getSize();
-        
-        // Draw ACK number at top center, above the header (bold)
-        page.drawText(ackNumber, {
-          x: width / 2 - 30, // Centered (adjust based on text width)
-          y: height - 30,    // 30pt from top
-          size: 14,
-          font: fontBold,
-          color: rgb(0, 0, 0)
-        });
-      }
+      // Stamp every page with the ACK number
+      const { width, height } = page.getSize();
+      
+      // Draw ACK number at top center, above the header (bold)
+      page.drawText(ackNumber, {
+        x: width / 2 - 30, // Centered (adjust based on text width)
+        y: height - 30,    // 30pt from top
+        size: 14,
+        font: fontBold,
+        color: rgb(0, 0, 0)
+      });
     }
     
     currentPage += pageCount;
-  }
-  
-  // Add page numbers to all pages
-  const totalPages = mergedPdf.getPageCount();
-  const pages = mergedPdf.getPages();
-  const fontSize = 14;
-  
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i];
-    const { width, height } = page.getSize();
-    const pageNumber = String(i + 1);
-    
-    // Calculate text width (rough estimate: ~0.6 * fontSize per character)
-    const textWidth = pageNumber.length * fontSize * 0.6;
-    const rightMargin = 30; // 30pt from right edge
-    
-    // Draw page number at bottom right corner
-    page.drawText(pageNumber, {
-      x: width - rightMargin - textWidth, // Right-aligned
-      y: 30,                               // 30pt from bottom
-      size: fontSize,
-      font: font,
-      color: rgb(0, 0, 0)
-    });
   }
   
   // Generate output filenames with ACK range
@@ -129,15 +114,434 @@ async function mergeAndStampPDFs(inputDir, outputPath) {
   console.log(`✓ Successfully merged ${pdfFiles.length} PDFs`);
   console.log(`  Total pages: ${mergedPdf.getPageCount()}`);
   
-  // Generate index (PDF and ODT)
+  // Generate index (PDF and ODT) if requested
+  if (createIndex) {
+    await generateIndex(indexData, finalIndexPath);
+    console.log(`✓ Index PDF saved to: ${finalIndexPath}`);
+    
+    await generateIndexODT(indexData, finalIndexOdtPath);
+    console.log(`✓ Index ODT saved to: ${finalIndexOdtPath}`);
+    
+    await generateStatementsODT(indexData, finalStatementsOdtPath);
+    console.log(`✓ Statements ODT saved to: ${finalStatementsOdtPath}`);
+  }
+  
+  // Add page numbers if requested
+  if (addPageNumbers) {
+    await addPageNumbersToDocument(finalMergedPath, finalMergedPath);
+  }
+  
+  return { 
+    mergedPath: finalMergedPath, 
+    indexPath: finalIndexPath, 
+    indexOdtPath: finalIndexOdtPath, 
+    statementsOdtPath: finalStatementsOdtPath,
+    indexData 
+  };
+}
+
+/**
+ * Add page numbers to an existing PDF document
+ * This function now properly covers existing page numbers with white background first
+ * then adds new page numbers to ensure clean numbering
+ */
+async function addPageNumbersToDocument(inputPath, outputPath) {
+  console.log(`\nAdding page numbers to: ${inputPath}`);
+  
+  const pdfBytes = await fs.readFile(inputPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  
+  const pages = pdfDoc.getPages();
+  const fontSize = 14;
+  
+  // First pass: Cover all potential page number locations with white rectangles
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const { width, height } = page.getSize();
+    
+    // Calculate the position where page numbers would be placed
+    const rightMargin = 30; // 30pt from right edge
+    const yPosition = 30; // 30pt from bottom
+    
+    // Estimate text width for a 2-3 digit number (e.g., "24" or "124")
+    // Using a conservative estimate to cover a wide range
+    const maxTextWidth = 4 * fontSize * 0.6; // Enough for 4 digits
+    
+    // Draw a white rectangle to cover any existing page numbers
+    // Making it extra large to ensure complete coverage
+    page.drawRectangle({
+      x: width - rightMargin - maxTextWidth - 10,
+      y: yPosition - 10,
+      width: maxTextWidth + 20,
+      height: fontSize + 20,
+      color: rgb(1, 1, 1), // White background
+      borderOpacity: 0 // No border
+    });
+  }
+  
+  // Second pass: Add new page numbers
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const { width, height } = page.getSize();
+    const pageNumber = String(i + 1);
+    
+    // Calculate text width and position
+    const textWidth = pageNumber.length * fontSize * 0.6;
+    const rightMargin = 30; // 30pt from right edge
+    const xPosition = width - rightMargin - textWidth; // Right-aligned
+    const yPosition = 30; // 30pt from bottom
+    
+    // Draw page number at bottom right corner
+    page.drawText(pageNumber, {
+      x: xPosition,
+      y: yPosition,
+      size: fontSize,
+      font: font,
+      color: rgb(0, 0, 0)
+    });
+  }
+  
+  const updatedBytes = await pdfDoc.save();
+  await fs.writeFile(outputPath, updatedBytes);
+  
+  console.log(`✓ Page numbers added to ${pages.length} pages`);
+}
+
+/**
+ * Regenerate index from an existing merged PDF by extracting ACK numbers
+ */
+async function regenerateIndexFromPDF(pdfPath, outputPath) {
+  console.log(`\nRegenerating index from: ${pdfPath}`);
+  
+  // Load PDF with pdfjs for text extraction
+  const pdfBytes = await fs.readFile(pdfPath);
+  const pdfData = new Uint8Array(pdfBytes);
+  
+  // Set up the worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
+  
+  const pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
+  
+  const numPages = pdfDoc.numPages;
+  console.log(`Processing ${numPages} pages`);
+  
+  // Extract ACK numbers and header information from each page
+  const pageData = [];
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdfDoc.getPage(i);
+    const textContent = await page.getTextContent();
+    
+    // Extract text items with position information
+    const textItems = textContent.items.map(item => ({
+      str: item.str,
+      transform: item.transform,
+      // transform[4] and transform[5] contain x,y coordinates
+      x: item.transform ? item.transform[4] : 0,
+      y: item.transform ? item.transform[5] : 0
+    }));
+    
+    // Look for ACK number pattern (ACK-XXX)
+    const ackMatch = textItems.map(item => item.str).join(' ').match(/ACK-\d{3}/);
+    const ackNumber = ackMatch ? ackMatch[0] : 'Unknown';
+    
+    pageData.push({
+      pageNumber: i,
+      ackNumber: ackNumber,
+      textItems: textItems
+    });
+  }
+  
+  // Group pages by ACK number to build index
+  const indexMap = new Map();
+  
+  for (const data of pageData) {
+    if (!indexMap.has(data.ackNumber)) {
+      indexMap.set(data.ackNumber, {
+        exhibit: data.ackNumber,
+        document: `Email from Unknown to Unknown`,
+        date: 'Unknown',
+        dateFull: 'Unknown',
+        sender: 'Unknown',
+        receiver: 'Unknown',
+        pages: [],
+        firstPageTextItems: data.textItems // Store text items from first page for parsing
+      });
+    }
+    indexMap.get(data.ackNumber).pages.push(data.pageNumber);
+  }
+  
+  // Parse sender, receiver, and date from the first page of each exhibit
+  for (const [ackNumber, entry] of indexMap.entries()) {
+    // Get text items from the first page of this exhibit
+    const firstPageTextItems = entry.firstPageTextItems;
+    
+    // Try to extract sender, receiver, and date from email header
+    const extractedData = extractEmailHeaderInfo(firstPageTextItems);
+    
+    // Update entry with extracted information
+    entry.sender = extractedData.sender;
+    entry.receiver = extractedData.receiver;
+    entry.date = extractedData.dateFormatted;
+    entry.dateFull = extractedData.dateFull;
+    entry.document = `Email from ${extractedData.sender} to ${extractedData.receiver}`;
+    
+    // Clean up temporary data
+    delete entry.firstPageTextItems;
+  }
+  
+  // Format page ranges
+  const indexData = [];
+  for (const entry of indexMap.values()) {
+    // Sort pages and format ranges
+    entry.pages.sort((a, b) => a - b);
+    
+    // Format page ranges (simplified)
+    let pagesStr = '';
+    if (entry.pages.length === 1) {
+      pagesStr = String(entry.pages[0]);
+    } else {
+      // Group consecutive pages into ranges
+      const ranges = [];
+      let start = entry.pages[0];
+      let end = entry.pages[0];
+      
+      for (let i = 1; i < entry.pages.length; i++) {
+        if (entry.pages[i] === end + 1) {
+          end = entry.pages[i];
+        } else {
+          ranges.push(start === end ? `${start}` : `${start}-${end}`);
+          start = entry.pages[i];
+          end = entry.pages[i];
+        }
+      }
+      ranges.push(start === end ? `${start}` : `${start}-${end}`);
+      pagesStr = ranges.join(', ');
+    }
+    
+    indexData.push({
+      exhibit: entry.exhibit,
+      document: entry.document,
+      date: entry.date,
+      dateFull: entry.dateFull,
+      sender: entry.sender,
+      receiver: entry.receiver,
+      pages: pagesStr
+    });
+  }
+  
+  // Sort by exhibit number
+  indexData.sort((a, b) => {
+    const numA = parseInt(a.exhibit.split('-')[1]);
+    const numB = parseInt(b.exhibit.split('-')[1]);
+    return numA - numB;
+  });
+  
+  // Generate output filenames
+  const firstAck = indexData[0].exhibit;
+  const lastAck = indexData[indexData.length - 1].exhibit;
+  const baseDir = path.dirname(outputPath);
+  const indexFilename = `${firstAck} - ${lastAck} Regenerated Index.pdf`;
+  const indexOdtFilename = `${firstAck} - ${lastAck} Regenerated Index.odt`;
+  const statementsOdtFilename = `${firstAck} - ${lastAck} Regenerated Statements.odt`;
+  const finalIndexPath = path.join(baseDir, indexFilename);
+  const finalIndexOdtPath = path.join(baseDir, indexOdtFilename);
+  const finalStatementsOdtPath = path.join(baseDir, statementsOdtFilename);
+  
+  // Generate index files
   await generateIndex(indexData, finalIndexPath);
-  console.log(`✓ Index PDF saved to: ${finalIndexPath}`);
+  console.log(`✓ Regenerated Index PDF saved to: ${finalIndexPath}`);
   
   await generateIndexODT(indexData, finalIndexOdtPath);
-  console.log(`✓ Index ODT saved to: ${finalIndexOdtPath}`);
+  console.log(`✓ Regenerated Index ODT saved to: ${finalIndexOdtPath}`);
   
   await generateStatementsODT(indexData, finalStatementsOdtPath);
-  console.log(`✓ Statements ODT saved to: ${finalStatementsOdtPath}`);
+  console.log(`✓ Regenerated Statements ODT saved to: ${finalStatementsOdtPath}`);
+  
+  return { 
+    indexPath: finalIndexPath, 
+    indexOdtPath: finalIndexOdtPath, 
+    statementsOdtPath: finalStatementsOdtPath,
+    indexData 
+  };
+}
+
+/**
+ * Extract sender, receiver, and date information from email header text items
+ * This handles PDF text extraction where individual characters may be separate text items
+ * @param {Array} textItems - Array of text items with position information
+ * @returns {Object} Extracted information
+ */
+function extractEmailHeaderInfo(textItems) {
+  // Default values
+  const result = {
+    sender: 'Unknown',
+    receiver: 'Unknown',
+    dateFormatted: 'Unknown',
+    dateFull: 'Unknown'
+  };
+  
+  // Reconstruct text by combining characters and grouping related items
+  const reconstructedText = reconstructAndCleanText(textItems);
+  
+  // Extract sender from "From:" field
+  const fromMatch = reconstructedText.match(/From:\s*["']([^"']*)["']/i);
+  if (fromMatch) {
+    result.sender = fromMatch[1].trim() || 'Unknown';
+  } else {
+    // Try without quotes
+    const fromMatchNoQuotes = reconstructedText.match(/From:\s*([^<\n\r]+)/i);
+    if (fromMatchNoQuotes) {
+      result.sender = fromMatchNoQuotes[1].trim() || 'Unknown';
+    }
+  }
+  
+  // Extract receiver from "To:" field
+  const toMatch = reconstructedText.match(/To:\s*["']([^"']*)["']/i);
+  if (toMatch) {
+    result.receiver = toMatch[1].trim() || 'Unknown';
+  } else {
+    // Try without quotes
+    const toMatchNoQuotes = reconstructedText.match(/To:\s*([^<\n\r]+)/i);
+    if (toMatchNoQuotes) {
+      result.receiver = toMatchNoQuotes[1].trim() || 'Unknown';
+    }
+  }
+  
+  // Extract date from "Date:" field
+  const dateMatch = reconstructedText.match(/Date:\s*([^\n\r]+)/i);
+  if (dateMatch) {
+    const dateString = dateMatch[1].trim();
+    // Remove the timezone description in parentheses if present
+    const cleanDateString = dateString.replace(/\s*\(.*?\)\s*$/, '').trim();
+    result.dateFull = cleanDateString;
+    
+    // Parse date in format: Day Mon DD YYYY HH:MM:SS TZ
+    // Example: Thu Apr 25 2024 09:01:38 GMT+1000
+    const dateParsed = cleanDateString.match(/\w+\s+(\w+)\s+(\d{1,2})\s+(\d{4})/i);
+    if (dateParsed) {
+      const [, month, day, year] = dateParsed;
+      
+      // Convert month name to number
+      const months = {
+        'jan': '01', 'january': '01',
+        'feb': '02', 'february': '02',
+        'mar': '03', 'march': '03',
+        'apr': '04', 'april': '04',
+        'may': '05',
+        'jun': '06', 'june': '06',
+        'jul': '07', 'july': '07',
+        'aug': '08', 'august': '08',
+        'sep': '09', 'september': '09',
+        'oct': '10', 'october': '10',
+        'nov': '11', 'november': '11',
+        'dec': '12', 'december': '12'
+      };
+      
+      const monthNum = months[month.toLowerCase()] || '01';
+      const dayPadded = day.padStart(2, '0');
+      
+      result.dateFormatted = `${dayPadded}.${monthNum}.${year}`;
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Reconstruct and clean text from PDF text items, handling character-by-character extraction
+ * @param {Array} textItems - Array of text items
+ * @returns {string} Clean reconstructed text
+ */
+function reconstructAndCleanText(textItems) {
+  if (textItems.length === 0) return '';
+  
+  // Sort items by Y coordinate (descending) then X coordinate (ascending)
+  const sortedItems = [...textItems].sort((a, b) => {
+    // If on different lines (Y difference is significant), sort by line (top to bottom)
+    if (Math.abs(b.y - a.y) > 5) {
+      return b.y - a.y; // Higher Y comes first (PDF Y=0 is bottom)
+    }
+    // If on same line, sort by X position (left to right)
+    return a.x - b.x;
+  });
+  
+  let reconstructed = '';
+  let lastX = -1;
+  let lastY = -1;
+  
+  for (let i = 0; i < sortedItems.length; i++) {
+    const item = sortedItems[i];
+    const currentX = item.x;
+    const currentY = item.y;
+    
+    // If this is the first item
+    if (lastX === -1) {
+      reconstructed += item.str;
+    }
+    // If we're on a new line (significant Y difference)
+    else if (Math.abs(currentY - lastY) > 5) {
+      reconstructed += '\n' + item.str; // Add newline between lines
+    }
+    // If we're on the same line
+    else {
+      // Calculate expected next position (based on previous character width)
+      const prevItem = sortedItems[i-1];
+      const expectedX = lastX + (prevItem?.str?.length || 0) * 3; // Rough width estimate
+      const gap = currentX - expectedX;
+      
+      if (gap > 15) {
+        reconstructed += '  ' + item.str; // Large gap = word boundary
+      } else if (gap > 5) {
+        reconstructed += ' ' + item.str; // Medium gap = space
+      } else {
+        reconstructed += item.str; // No gap = part of same word
+      }
+    }
+    
+    lastX = currentX;
+    lastY = currentY;
+  }
+  
+  // Clean up the reconstructed text by removing extra spaces within words
+  let cleanedText = reconstructed
+    .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+    .replace(/\s+([:.,)!?])/g, '$1') // Remove space before punctuation
+    .replace(/([(\s])\s+/g, '$1') // Remove extra spaces after punctuation or space
+    .replace(/\sG\sM\sT/g, ' GMT') // Fix GMT spacing
+    .replace(/\sQ\sld/g, ' Qld') // Fix Qld spacing
+    .replace(/\scrown\s/g, ' crown') // Fix crown spacing
+    .replace(/\sdecision\s/g, ' decision') // Fix decision spacing
+    .replace(/\senquiry\s/g, ' enquiry') // Fix enquiry spacing
+    .replace(/\sF\sro\sm:/g, 'From:') // Fix From spacing
+    .replace(/\sT\so:/g, 'To:') // Fix To spacing
+    .replace(/\sD\sate:/g, 'Date:') // Fix Date spacing
+    .replace(/\sS\subject:/g, 'Subject:') // Fix Subject spacing
+    .replace(/\sJ\saim\se\sM\sc\sI\sver/g, ' Jaime McIver') // Fix Jaime McIver spacing
+    .replace(/\sA\ss\sh\sley\sK\sing/g, ' Ashley King') // Fix Ashley King spacing
+    .trim();
+  
+  // Also remove spaces in email addresses
+  cleanedText = cleanedText.replace(/([\w])\s+@/g, '$1@');
+  cleanedText = cleanedText.replace(/@\s+([\w])/g, '@$1');
+  cleanedText = cleanedText.replace(/(\.)\s+([a-z])/g, '$1$2');
+  
+  // Fix common word spacing issues
+  const commonWords = [
+    'crown', 'law', 'qld', 'gov', 'au', 
+    'decision', 'enquiry', 'jaime', 'mciver',
+    'ashley', 'king', 'subject', 'date', 'from', 'to',
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+    'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'
+  ];
+  
+  commonWords.forEach(word => {
+    const spacedWord = word.split('').join('\\s+');
+    const regex = new RegExp(`\\s${spacedWord}\\s`, 'gi');
+    cleanedText = cleanedText.replace(regex, ` ${word} `);
+  });
+  
+  return cleanedText;
 }
 
 /**
@@ -689,17 +1093,71 @@ async function generateIndexODT(indexData, outputPath) {
 }
 
 // CLI usage
-const inputDir = process.argv[2];
-const outputPath = process.argv[3] || path.join(inputDir, 'merged-acknowledgments.pdf');
+const args = process.argv.slice(2);
+const command = args[0];
 
-if (!inputDir) {
-  console.error('Usage: node merge-stamp.js <input-directory> [output.pdf]');
-  console.error('Example: node merge-stamp.js "/path/to/pdfs" output.pdf');
+if (!command) {
+  console.error('Usage: node merge-stamp.js <command> [options]');
+  console.error('Commands:');
+  console.error('  merge <input-directory> [output.pdf]    - Merge and stamp PDFs');
+  console.error('  paginate <file>                         - Add page numbers to existing PDF');
+  console.error('  regenerate <file> [output-directory]    - Regenerate index from existing PDF');
+  console.error('');
+  console.error('Examples:');
+  console.error('  node merge-stamp.js merge "/path/to/pdfs" output.pdf');
+  console.error('  node merge-stamp.js paginate "/path/to/merged.pdf"');
+  console.error('  node merge-stamp.js regenerate "/path/to/merged.pdf" "/path/to/output"');
   process.exit(1);
 }
 
-mergeAndStampPDFs(inputDir, outputPath).catch(err => {
-  console.error('Error:', err);
+// Handle different commands
+if (command === 'paginate') {
+  const filePath = args[1];
+  if (!filePath) {
+    console.error('Error: File path is required for paginate command');
+    process.exit(1);
+  }
+  
+  // Add page numbers to existing PDF
+  addPageNumbersToDocument(filePath, filePath)
+    .then(() => console.log('Page numbers added successfully'))
+    .catch(err => {
+      console.error('Error adding page numbers:', err);
+      process.exit(1);
+    });
+} else if (command === 'regenerate') {
+  const filePath = args[1];
+  const outputDir = args[2] || path.dirname(filePath);
+  
+  if (!filePath) {
+    console.error('Error: File path is required for regenerate command');
+    process.exit(1);
+  }
+  
+  // Regenerate index from existing PDF
+  const outputPath = path.join(outputDir, 'regenerated-index.pdf');
+  regenerateIndexFromPDF(filePath, outputPath)
+    .then(() => console.log('Index regeneration completed'))
+    .catch(err => {
+      console.error('Error regenerating index:', err);
+      process.exit(1);
+    });
+} else if (command === 'merge') {
+  const inputDir = args[1];
+  const outputPath = args[2] || path.join(inputDir || '.', 'merged-acknowledgments.pdf');
+  
+  if (!inputDir) {
+    console.error('Error: Input directory is required for merge command');
+    process.exit(1);
+  }
+  
+  mergeAndStampPDFs(inputDir, outputPath)
+    .catch(err => {
+      console.error('Error:', err);
+      process.exit(1);
+    });
+} else {
+  console.error(`Error: Unknown command '${command}'`);
+  console.error('Valid commands are: merge, paginate, regenerate');
   process.exit(1);
-});
-
+}

@@ -1,0 +1,132 @@
+--- a/merge-stamp.js
++++ b/merge-stamp.js
+@@ -901,11 +901,12 @@
+   console.error('Commands:');
+   console.error('  merge <input-directory> [output.pdf]    - Merge and stamp PDFs');
+   console.error('  paginate <file>                         - Add page numbers to existing PDF');
+   console.error('  regenerate <file> [output-directory]    - Regenerate index from existing PDF');
++  console.error('  restamp <file> [output-directory]       - Re-stamp exhibit numbers and regenerate documents');
+   console.error('');
+   console.error('Examples:');
+   console.error('  node merge-stamp.js merge "/path/to/pdfs" output.pdf');
+   console.error('  node merge-stamp.js paginate "/path/to/merged.pdf"');
+-  console.error('  node merge-stamp.js regenerate "/path/to/merged.pdf" "/path/to/output"');
++  console.error('  node merge-stamp.js regenerate "/path/to/merged.pdf" "/path/to/output"');
+   process.exit(1);
+ }
+ 
+@@ -932,6 +933,55 @@
+       process.exit(1);
+     });
+ } else if (command === 'regenerate') {
++} else if (command === 'restamp') {
++  const filePath = args[1];
++  const outputDir = args[2] || path.dirname(filePath);
++  
++  if (!filePath) {
++    console.error('Error: File path is required for restamp command');
++    process.exit(1);
++  }
++  
++  // Re-stamp exhibit numbers on existing PDF and regenerate documents
++  reStampExhibitNumbers(filePath, filePath, outputDir)
++    .then(() => console.log('Exhibit numbers re-stamped and documents regenerated successfully'))
++    .catch(err => {
++      console.error('Error re-stamping exhibit numbers:', err);
++      process.exit(1);
++    });
++}
++
++/**
++ * Re-stamp exhibit numbers to an existing PDF document
++ * This function covers existing exhibit numbers with white background first
++ * then adds new exhibit numbers to ensure clean numbering
++ * Used when pages have been removed and exhibit numbering needs to be updated
++ * Also regenerates index and statement documents
++ */
++async function reStampExhibitNumbers(inputPath, outputPath, outputDir) {
++  console.log(`\nRe-stamping exhibit numbers to: ${inputPath}`);
++  
++  // First regenerate the index to get the correct exhibit sequence
++  const { indexData, indexPath, indexOdtPath, statementsOdtPath } = await regenerateIndexFromPDF(inputPath, outputDir);
++  
++  const pdfBytes = await fs.readFile(inputPath);
++  const pdfDoc = await PDFDocument.load(pdfBytes);
++  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
++  
++  const pages = pdfDoc.getPages();
++  const fontSize = 14;
++  
++  // First pass: Cover all potential exhibit number locations with white rectangles
++  for (let i = 0; i < pages.length; i++) {
++    const page = pages[i];
++    const { width, height } = page.getSize();
++    
++    // Calculate the position where exhibit numbers are placed (top center)
++    const yPosition = height - 30; // 30pt from top
++    const centerX = width / 2 - 30;
++    
++    // Estimate text width for exhibit numbers (e.g., "ACK-001")
++    const maxTextWidth = 8 * fontSize * 0.6; // Enough for "ACK-XXX"
++    
++    // Draw a white rectangle to cover any existing exhibit numbers
++    page.drawRectangle({
++      x: centerX - 20,
++      y: yPosition - 10,
++      width: maxTextWidth + 40,
++      height: fontSize + 20,
++      color: rgb(1, 1, 1), // White background
++      borderOpacity: 0 // No border
++    });
++  }
++  
++  // Second pass: Add new exhibit numbers based on regenerated index
++  let pageIndex = 0;
++  for (const entry of indexData) {
++    const ackNumber = entry.exhibit;
++    const pageRange = entry.pages.split('-');
++    let startPage, endPage;
++    
++    if (pageRange.length === 1) {
++      startPage = parseInt(pageRange[0]) - 1; // Convert to 0-based index
++      endPage = startPage;
++    } else {
++      startPage = parseInt(pageRange[0]) - 1; // Convert to 0-based index
++      endPage = parseInt(pageRange[1]) - 1;   // Convert to 0-based index
++    }
++    
++    // Stamp all pages in this exhibit range
++    for (let i = startPage; i <= endPage && i < pages.length; i++) {
++      const page = pages[i];
++      const { width, height } = page.getSize();
++      
++      // Calculate text width and position (same as original placement)
++      const textWidth = ackNumber.length * fontSize * 0.6;
++      const xPosition = width / 2 - 30; // Centered (adjust based on text width)
++      const yPosition = height - 30;    // 30pt from top
++      
++      // Draw exhibit number at top center, above the header (bold)
++      page.drawText(ackNumber, {
++        x: xPosition,
++        y: yPosition,
++        size: fontSize,
++        font: fontBold,
++        color: rgb(0, 0, 0)
++      });
++      
++      pageIndex++;
++    }
++  }
++  
++  const updatedBytes = await pdfDoc.save();
++  await fs.writeFile(outputPath, updatedBytes);
++  
++  console.log(`✓ Exhibit numbers re-stamped on ${pages.length} pages`);
++  console.log(`✓ Index PDF saved to: ${indexPath}`);
++  console.log(`✓ Index ODT saved to: ${indexOdtPath}`);
++  console.log(`✓ Statements ODT saved to: ${statementsOdtPath}`);
++}
++
++/**
++ * Regenerate index from an existing merged PDF by extracting ACK numbers
++ */
