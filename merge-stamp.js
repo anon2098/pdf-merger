@@ -434,7 +434,7 @@ function extractEmailHeaderInfo(textItems) {
     // Example: Thu Apr 25 2024 09:01:38 GMT+1000
     const dateParsed = cleanDateString.match(/\w+\s+(\w+)\s+(\d{1,2})\s+(\d{4})/i);
     if (dateParsed) {
-      const [, month, day, year] = dateParsed;
+      let [, month, day, year] = dateParsed;
       
       // Convert month name to number
       const months = {
