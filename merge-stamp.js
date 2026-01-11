@@ -452,7 +452,9 @@ function extractEmailHeaderInfo(textItems) {
         'dec': '12', 'december': '12'
       };
       
-      const monthNum = months[month.toLowerCase()] || '01';
+      // Clean up potential spacing in month names
+      month = month.replace(/\s+/g, '').toLowerCase();
+      const monthNum = months[month] || '01';
       const dayPadded = day.padStart(2, '0');
       
       result.dateFormatted = `${dayPadded}.${monthNum}.${year}`;
